@@ -1,0 +1,67 @@
+---
+AIGC:
+    Label: "1"
+    ContentProducer: 001191440300708461136T1XGW3
+    ProduceID: 7f40075f40fd472178ba0417306d8b11_c2b3c8f3a28b11f1abe1525400e6dd8f
+    ReservedCode1: CiYCOt9imzJcTbPVuKHtbfwfFsO615ttIreUwp/uQP6jl20/7gaNnpRpzEuujQzF5iOPzTpNU/pvE8jlSFRDc3wqyYYQAn5JqfwRKBTOQyaKtqr87efcQFSOYy4+LyaD9yZMHyeY1ECHZmBoKlnHTH1GUNpxne3alNGclwSiKKAaXKB3/12BLcBTdhQ=
+    ContentPropagator: 001191440300708461136T1XGW3
+    PropagateID: 7f40075f40fd472178ba0417306d8b11_c2b3c8f3a28b11f1abe1525400e6dd8f
+    ReservedCode2: CiYCOt9imzJcTbPVuKHtbfwfFsO615ttIreUwp/uQP6jl20/7gaNnpRpzEuujQzF5iOPzTpNU/pvE8jlSFRDc3wqyYYQAn5JqfwRKBTOQyaKtqr87efcQFSOYy4+LyaD9yZMHyeY1ECHZmBoKlnHTH1GUNpxne3alNGclwSiKKAaXKB3/12BLcBTdhQ=
+---
+
+
+
+# bluetooth-link
+
+无网络蓝牙离线通讯工具（纯 Python 标准库复刻）。
+
+参考 GitHub 开源思路（Kabootar / Chat-app-using-Bluetooth / PhoneLink）：两台 Linux 设备通过蓝牙 RFCOMM 点对点直连，支持文本消息与文件传输，全程不依赖互联网、服务器或 SIM 卡。
+
+## 特性
+
+- 纯标准库实现：`socket.AF_BLUETOOTH` + `BTPROTO_RFCOMM`
+- 自定义帧协议：魔数 `BL` + 版本 + 类型（文本/文件）+ 长度头
+- 文本消息即时收发（UTF-8）
+- 文件传输：`文件名 + 内容` 单帧发送，接收端自动存入 `received/`
+- 命令行交互：`/send <文件>`、`/status`、`/quit`
+
+## 依赖
+
+- Linux + bluez（蓝牙协议栈）
+- 带蓝牙适配器的设备（如树莓派、笔记本）
+
+```bash
+sudo apt install bluez
+```
+
+## 用法
+
+服务端（等待连接）：
+
+```bash
+python3 bluetooth_link.py server [端口=10] [蓝牙适配器地址]
+```
+
+客户端（发起连接）：
+
+```bash
+python3 bluetooth_link.py client <对方蓝牙MAC> [端口=10]
+```
+
+连接建立后直接输入文本发送；`/send 文件路径` 发送文件；`/quit` 退出。
+
+## 测试
+
+云端无蓝牙硬件，协议逻辑已用 TCP socketpair 模拟验证：
+
+- 语法检查通过（py_compile）
+- 文本消息帧收发正常
+- 文件帧收发正常，接收端文件与源文件字节一致
+
+## 限制
+
+- 经典蓝牙 RFCOMM，非 BLE
+- 单连接（1 对 1）
+- 未加密，仅适合可信设备间临时通讯
+*（内容由AI生成，仅供参考）*
+*（内容由AI生成，仅供参考）*
