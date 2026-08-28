@@ -279,7 +279,7 @@ function fmtSize(n){
 async function deriveKey(pass, saltHex){
   const enc = new TextEncoder();
   const base = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
-  return crypto.subtle.deriveKey({ name:'PBKDF2', salt: hex2buf(saltHex), iterations: 120000, hash:'SHA-256' },
+  return crypto.subtle.deriveKey({ name:'PBKDF2', salt: hex2buf(saltHex), iterations: 600000, hash:'SHA-256' },
     base, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
 }
 async function aesEncrypt(plainBytes){
@@ -3581,17 +3581,14 @@ let gameURL = null;
 function openGame(key){
   const src = (key === '06') ? GAME_06 : GAME_02;
   if (!src) return;
-  const blob = new Blob([src], { type:'text/html' });
-  if (gameURL) URL.revokeObjectURL(gameURL);
-  gameURL = URL.createObjectURL(blob);
-  $('gameFrame').src = gameURL;
+  // 直接内嵌渲染（srcdoc），不依赖 Blob URL，离线/手机浏览器兼容性最好
+  $('gameFrame').srcdoc = src;
   $('gamePick').classList.add('hidden');
   $('gameFrameWrap').classList.remove('hidden');
   $('btnGameBack').classList.remove('hidden');
 }
 function backGame(){
-  $('gameFrame').src = 'about:blank';
-  if (gameURL){ URL.revokeObjectURL(gameURL); gameURL = null; }
+  $('gameFrame').srcdoc = '';
   $('gameFrameWrap').classList.add('hidden');
   $('gamePick').classList.remove('hidden');
   $('btnGameBack').classList.add('hidden');
@@ -3600,7 +3597,7 @@ function openGameHall(){ $('gameOverlay').classList.remove('hidden'); document.b
 function closeGameHall(){
   $('gameOverlay').classList.add('hidden');
   document.body.style.overflow = '';
-  if ($('gameFrame').src && $('gameFrame').src !== 'about:blank') backGame();
+  if ($('gameFrame').srcdoc) backGame();
 }
 $('btnGames').onclick = openGameHall;
 $('btnGameClose').onclick = closeGameHall;
