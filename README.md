@@ -12,7 +12,7 @@ AIGC:
 # bluetooth-link —— 加密通道工具（secure_link）
 
 无网络蓝牙离线通讯工具升级版：**蓝牙 RFCOMM / TCP 双通道，文本与文件全加密**。
-另有 **HTML 网页版**（secure_link.html）：浏览器点对点加密通讯，无需安装 Python。
+另有 **HTML 网页版**（secure_link_v2.html）：浏览器点对点加密通讯，无需安装 Python。
 
 ## 特性
 
@@ -23,7 +23,7 @@ AIGC:
 - **错误密钥 / 篡改检测**：密钥不一致或数据被篡改时，接收端明确提示解密失败
 - 纯 Python + cryptography，跨平台 TCP 可用
 
-## HTML 网页版（secure_link.html）v2
+## HTML 网页版（secure_link_v2.html）
 
 双击用 Chrome/Edge 打开即可，无需安装任何东西。单文件，可离线使用。
 
