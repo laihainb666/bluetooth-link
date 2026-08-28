@@ -25,6 +25,33 @@ AIGC:
 - 文件传输：`文件名 + 内容` 单帧发送，接收端自动存入 `received/`
 - 命令行交互：`/send <文件>`、`/status`、`/quit`
 
+## 加密通道对话（encrypt_chat.py）
+
+有网络 / 无网络都能用的 AES-GCM 加密点对点对话：
+
+- **在线（TCP）**：局域网或公网中继，`--channel tcp`
+- **离线（蓝牙）**：Linux 蓝牙 RFCOMM 直连，`--channel ble`，不依赖网络
+- 口令经 scrypt 派生 256-bit 密钥，每条消息随机 nonce + 认证标签，防窃听防篡改
+- 消息帧：`BLCHAT|1|nonce+密文+tag`（十六进制）
+
+```bash
+# 依赖
+python3 -m pip install cryptography
+
+# 在线模式
+python3 encrypt_chat.py listen --port 9000 --key 你的口令
+python3 encrypt_chat.py chat   --host <对方IP> --port 9000 --key 你的口令
+
+# 离线蓝牙模式（双方 Linux + 蓝牙）
+python3 encrypt_chat.py listen --channel ble --key 你的口令
+python3 encrypt_chat.py chat   --channel ble --mac <对方蓝牙MAC> --key 你的口令
+
+# 生成随机口令
+python3 encrypt_chat.py passwd
+```
+
+输入消息回车发送，`/quit` 退出，`/name 名字` 改昵称。
+
 ## 依赖
 
 - Linux + bluez（蓝牙协议栈）
@@ -57,11 +84,12 @@ python3 bluetooth_link.py client <对方蓝牙MAC> [端口=10]
 - 语法检查通过（py_compile）
 - 文本消息帧收发正常
 - 文件帧收发正常，接收端文件与源文件字节一致
+- encrypt_chat 加解密/篡改拦截/错误密钥拒绝/TCP 双向收发均通过实测
 
 ## 限制
 
 - 经典蓝牙 RFCOMM，非 BLE
 - 单连接（1 对 1）
-- 未加密，仅适合可信设备间临时通讯
+- encrypt_chat 蓝牙通道需要 Linux + 蓝牙硬件；TCP 通道可在任意联网环境使用
 *（内容由AI生成，仅供参考）*
 *（内容由AI生成，仅供参考）*
