@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SecureLink — 加密通道（WebRTC 点对点）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC","Microsoft YaHei",system-ui,sans-serif; background:#0f172a; color:#e2e8f0; min-height:100vh; padding:20px; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  .sub { color:#94a3b8; font-size: 13px; margin-bottom: 18px; }
+  .card { background:#1e293b; border:1px solid #334155; border-radius:12px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size: 15px; margin-bottom: 10px; color:#7dd3fc; }
+  label { display:block; font-size:13px; margin:8px 0 4px; color:#cbd5e1; }
+  input[type=text], input[type=password], textarea { width:100%; background:#0f172a; border:1px solid #334155; color:#e2e8f0; border-radius:8px; padding:8px; font-size:13px; }
+  textarea { height:110px; font-family:monospace; resize:vertical; }
+  button { background:#0284c7; color:#fff; border:none; border-radius:8px; padding:8px 16px; font-size:13px; cursor:pointer; margin:6px 6px 0 0; }
+  button:hover { background:#0369a1; }
+  button:disabled { background:#475569; cursor:not-allowed; }
+  .btn-sec { background:#059669; } .btn-sec:hover{ background:#047857; }
+  .btn-warn { background:#b45309; } .btn-warn:hover{ background:#92400e; }
+  .status { font-size:13px; margin-top:8px; color:#fbbf24; }
+  .ok { color:#34d399; } .err { color:#f87171; }
+  #chat { height: 200px; overflow-y:auto; background:#0f172a; border:1px solid #334155; border-radius:8px; padding:10px; font-size:13px; margin-top:8px; }
+  .msg { margin:4px 0; } .peer { color:#93c5fd; } .me { color:#fbbf24; }
+  .sys { color:#64748b; font-size:12px; }
+  #input { display:flex; gap:8px; margin-top:8px; }
+  #input input { flex:1; }
+  .row { display:flex; gap:10px; }
+  .row > div { flex:1; }
+  .progress { background:#0f172a; border:1px solid #334155; border-radius:8px; height:18px; margin-top:6px; overflow:hidden; }
+  .bar { height:100%; width:0%; background:#0284c7; transition:width .2s; }
+  .fitem { font-size:13px; margin-top:6px; color:#cbd5e1; }
+  a.dl { color:#34d399; }
+  .tip { color:#94a3b8; font-size:12px; line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔐 SecureLink — 加密通道</h1>
+  <div class="sub">WebRTC 点对点直连 · AES-GCM 全加密 · 文本 + 大文件分块传输 · 无需服务器（信令手动复制粘贴）</div>
+
+  <div class="card">
+    <h2>① 连接准备</h2>
+    <label>加密口令（两端必须一致）</label>
+    <input type="password" id="pass" placeholder="输入口令，连接前设置">
+    <div class="status" id="connStatus">未连接</div>
+    <button class="btn-sec" id="btnOffer">我是发起方：创建连接</button>
+    <button class="btn-sec" id="btnAnswer" disabled>我是接收方：接受并生成应答</button>
+  </div>
+
+  <div class="card">
+    <h2>② 手动信令（复制粘贴给对方）</h2>
+    <div class="row">
+      <div>
+        <label>我的信令（复制发给对方）</label>
+        <textarea id="mySig" readonly placeholder="点击上方按钮后自动生成"></textarea>
+        <button id="btnCopySig">复制我的信令</button>
+      </div>
+      <div>
+        <label>对方信令（粘贴后点应用）</label>
+        <textarea id="peerSig" placeholder="粘贴对方发来的信令文本"></textarea>
+        <button id="btnApplySig" disabled>应用对方信令</button>
+      </div>
+    </div>
+    <div class="tip">流程：发起方点“创建连接”→ 把信令发给对方 → 对方粘贴点“接受并生成应答”并把应答发回 → 发起方粘贴应答点“应用对方信令”。</div>
+  </div>
+
+  <div class="card" id="chatCard" style="display:none">
+    <h2>③ 加密通讯</h2>
+    <div id="chat"></div>
+    <div class="row" id="input">
+      <input type="text" id="msg" placeholder="输入消息回车发送">
+      <input type="file" id="file" style="display:none">
+      <button id="btnFile">发送文件</button>
+    </div>
+    <div class="fitem" id="fileInfo"></div>
+    <div class="progress" id="progWrap" style="display:none"><div class="bar" id="progBar"></div></div>
+    <div class="fitem" id="recvFiles"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ================= 全局状态 ================= */
+let pc = null;            // RTCPeerConnection
+let dc = null;            // DataChannel
+let aesKey = null;        // CryptoKey (AES-GCM)
+let mySalt = null;        // 本会话随机盐（hex）
+let role = null;          // 'offer' | 'answer'
+let connected = false;
+let nick = '我';
+
+const CHUNK = 1024 * 1024;      // 文件分块 1MB
+const BACKPRESSURE = 16 * 1024 * 1024;  // 发送缓冲上限
+
+/* 帧类型 */
+const FT_MSG = 1;   // 加密文本
+const FT_FM  = 2;   // 加密文件元
+const FT_FD  = 3;   // 加密文件块
+const FT_FE  = 4;   // 加密文件结束
+
+let pendingFile = null;  // 接收中的文件 {name,size,chunks:[],got}
+
+const $ = id => document.getElementById(id);
+
+/* ================= 工具 ================= */
+function randHex(n){ const a=new Uint8Array(n); crypto.getRandomValues(a); return [...a].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+function buf2hex(b){ return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function hex2buf(h){ const a=new Uint8Array(h.length/2); for(let i=0;i<a.length;i++) a[i]=parseInt(h.slice(i*2,i*2+2),16); return a; }
+
+async function deriveKey(pass, saltHex){
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt: hex2buf(saltHex), iterations: 120000, hash:'SHA-256' },
+    base, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+}
+
+async function aesEncrypt(plainBytes){
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv:nonce}, aesKey, plainBytes));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(nonce, 0); out.set(ct, 12);
+  return out;
+}
+async function aesDecrypt(blob){
+  const nonce = blob.slice(0, 12);
+  const ct = blob.slice(12);
+  return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM', iv:nonce}, aesKey, ct));
+}
+
+/* 帧：1 字节类型 + 4 字节长度 + payload */
+function frame(typ, payload){
+  const out = new Uint8Array(5 + payload.length);
+  out[0] = typ;
+  new DataView(out.buffer).setUint32(1, payload.length, false);
+  out.set(payload, 5);
+  return out.buffer;
+}
+function parseFrame(buf){
+  const u = new Uint8Array(buf);
+  const len = new DataView(u.buffer, u.byteOffset, 5).getUint32(1, false);
+  return { typ: u[0], payload: u.slice(5, 5 + len) };
+}
+
+/* ================= 信令 ================= */
+function buildSignal(pc, saltHex, type){
+  return JSON.stringify({ app:'secure-link', salt: saltHex, type, sdp: pc.localDescription.sdp });
+}
+function parseSignal(text){
+  try {
+    const o = JSON.parse(text.trim());
+    if (o.app !== 'secure-link' || !o.salt || !o.sdp) throw 0;
+    return o;
+  } catch(e){ return null; }
+}
+
+function gatherComplete(p){
+  return new Promise(res => {
+    let done = false;
+    const t = setTimeout(()=>{ if(!done){done=true; res();} }, 4000);
+    p.onicecandidate = e => {
+      if (e.candidate === null && !done){ done=true; clearTimeout(t); res(); }
+    };
+  });
+}
+
+function makePC(){
+  // 局域网/离线直连无需 STUN；公网跨 NAT 可在此追加 { urls:'stun:stun.l.google.com:19302' }
+  const p = new RTCPeerConnection({ iceServers: [] });
+  return p;
+}
+
+async function doOffer(){
+  const pass = $('pass').value;
+  if (!pass) { setStatus('请先输入口令', true); return; }
+  role = 'offer';
+  mySalt = randHex(16);
+  aesKey = await deriveKey(pass, mySalt);
+
+  pc = makePC();
+  dc = pc.createDataChannel('secure', { ordered: true });
+  wireDC(dc);
+  wirePC();
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await gatherComplete(pc);
+  $('mySig').value = buildSignal(pc, mySalt, 'offer');
+  $('btnCopySig').disabled = false;
+  $('btnAnswer').disabled = false;
+  setStatus('已创建连接，把“我的信令”复制发给对方', false);
+}
+
+async function doAnswer(){
+  const text = $('peerSig').value;
+  const sig = parseSignal(text);
+  const pass = $('pass').value;
+  if (!sig) { setStatus('对方信令格式无效', true); return; }
+  if (!pass) { setStatus('请先输入口令', true); return; }
+  if (sig.type !== 'offer') { setStatus('请粘贴发起方的 offer 信令', true); return; }
+
+  role = 'answer';
+  mySalt = sig.salt;                 // 使用发起方生成的盐
+  aesKey = await deriveKey(pass, mySalt);
+
+  pc = makePC();
+  wirePC();
+  pc.ondatachannel = ev => { dc = ev.channel; wireDC(dc); };
+  await pc.setRemoteDescription({ type:'offer', sdp: sig.sdp });
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  await gatherComplete(pc);
+  $('mySig').value = buildSignal(pc, mySalt, 'answer');
+  $('btnCopySig').disabled = false;
+  $('btnApplySig').disabled = true;
+  setStatus('已生成应答信令，复制发回发起方', false);
+}
+
+async function applySignal(){
+  const text = $('peerSig').value;
+  const sig = parseSignal(text);
+  if (!sig) { setStatus('对方信令格式无效', true); return; }
+  if (sig.type !== 'answer') { setStatus('请粘贴接收方的 answer 信令', true); return; }
+  if (mySalt !== sig.salt) { setStatus('盐不一致，请确认使用同一次会话的信令', true); return; }
+  await pc.setRemoteDescription({ type:'answer', sdp: sig.sdp });
+  setStatus('应答已应用，正在建立加密通道…', false);
+}
+
+function wirePC(){
+  pc.onconnectionstatechange = () => {
+    setStatus('连接状态: ' + pc.connectionState,
+      pc.connectionState === 'failed' || pc.connectionState === 'disconnected');
+    if (pc.connectionState === 'connected') { connected = true; showChat(); }
+  };
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === 'failed') setStatus('ICE 失败：无法直连（局域网外需 STUN）', true);
+  };
+}
+
+function wireDC(d){
+  d.binaryType = 'arraybuffer';
+  d.onopen = () => { setStatus('加密通道已建立 ✓', false); showChat(); };
+  d.onclose = () => { setStatus('通道已关闭', true); };
+  d.onmessage = async ev => {
+    try {
+      const f = parseFrame(ev.data);
+      if (f.typ === FT_MSG){
+        const plain = await aesDecrypt(f.payload);
+        addMsg('对方', new TextDecoder().decode(plain));
+      } else if (f.typ === FT_FM){
+        const meta = JSON.parse(new TextDecoder().decode(await aesDecrypt(f.payload)));
+        pendingFile = { name: meta.name, size: meta.size, chunks: [], got: 0 };
+        showProg(0, '接收中: ' + meta.name + ' (0/' + meta.size + ' B)');
+      } else if (f.typ === FT_FD){
+        if (!pendingFile) return;
+        const blk = await aesDecrypt(f.payload);
+        pendingFile.chunks.push(blk);
+        pendingFile.got += blk.length;
+        showProg(pendingFile.got / pendingFile.size, '接收中: ' + pendingFile.name);
+      } else if (f.typ === FT_FE){
+        await aesDecrypt(f.payload);
+        if (pendingFile){
+          const blob = new Blob(pendingFile.chunks);
+          const url = URL.createObjectURL(blob);
+          const el = document.createElement('div');
+          el.className = 'fitem';
+          el.innerHTML = '✓ 收到文件 <a class="dl" href="' + url + '" download="' + pendingFile.name + '">' + pendingFile.name +
+            '</a> (' + pendingFile.size + ' B)';
+          $('recvFiles').appendChild(el);
+          pendingFile = null;
+          showProg(0, '');
+        }
+      }
+    } catch(e){
+      addSys('解密失败：口令不一致或数据被篡改');
+    }
+  };
+}
+
+/* ================= 发送 ================= */
+async function sendTyped(typ, plainBytes){
+  const enc = await aesEncrypt(plainBytes);
+  await sendWithBackpressure(frame(typ, enc));
+}
+function sendWithBackpressure(data){
+  if (dc.bufferedAmount > BACKPRESSURE){
+    return new Promise(res => {
+      const iv = setInterval(() => {
+        if (dc.bufferedAmount <= BACKPRESSURE / 2){ clearInterval(iv); res(); }
+      }, 50);
+    }).then(() => dc.send(data));
+  }
+  dc.send(data);
+  return Promise.resolve();
+}
+
+function sendText(){
+  const v = $('msg').value;
+  if (!v.trim() || !dc || dc.readyState !== 'open') return;
+  sendTyped(FT_MSG, new TextEncoder().encode(v));
+  addMsg(nick, v);
+  $('msg').value = '';
+}
+
+async function sendFile(file){
+  if (!dc || dc.readyState !== 'open'){ addSys('通道未就绪'); return; }
+  const meta = JSON.stringify({ name: file.name, size: file.size });
+  await sendTyped(FT_FM, new TextEncoder().encode(meta));
+  let off = 0;
+  while (off < file.size){
+    const blk = new Uint8Array(await file.slice(off, off + CHUNK).arrayBuffer());
+    await sendTyped(FT_FD, blk);
+    off += blk.length;
+    showProg(off / file.size, '发送中: ' + file.name + ' (' + off + '/' + file.size + ' B)');
+  }
+  await sendTyped(FT_FE, new TextEncoder().encode('ok'));
+  showProg(0, '');
+  addSys('已发送文件: ' + file.name + ' (' + file.size + ' B)');
+}
+
+/* ================= UI ================= */
+function setStatus(t, err){ const s = $('connStatus'); s.className = 'status ' + (err ? 'err' : 'ok'); s.textContent = t; }
+function showChat(){ $('chatCard').style.display = 'block'; }
+function addMsg(who, text){
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.innerHTML = '<span class="' + (who === nick ? 'me' : 'peer') + '">' + who + ':</span> ' + escapeHtml(text);
+  $('chat').appendChild(d); $('chat').scrollTop = $('chat').scrollHeight;
+}
+function addSys(text){
+  const d = document.createElement('div');
+  d.className = 'msg sys'; d.textContent = '· ' + text;
+  $('chat').appendChild(d); $('chat').scrollTop = $('chat').scrollHeight;
+}
+function showProg(p, info){
+  if (p > 0){ $('progWrap').style.display = 'block'; $('progBar').style.width = Math.round(p*100) + '%'; }
+  else { $('progWrap').style.display = 'none'; $('progBar').style.width = '0%'; }
+  if (info) $('fileInfo').textContent = info;
+}
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ================= 事件绑定 ================= */
+$('btnOffer').onclick = doOffer;
+$('btnAnswer').onclick = doAnswer;
+$('btnApplySig').onclick = applySignal;
+$('btnCopySig').onclick = () => { $('mySig').select(); document.execCommand('copy'); addSys('信令已复制'); };
+$('btnFile').onclick = () => $('file').click();
+$('file').onchange = () => { if ($('file').files[0]) sendFile($('file').files[0]); $('file').value = ''; };
+$('msg').onkeydown = e => { if (e.key === 'Enter') sendText(); };
+$('peerSig').oninput = () => { $('btnApplySig').disabled = !parseSignal($('peerSig').value); };
+</script>
+</body>
+</html>
